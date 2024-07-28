@@ -5,9 +5,13 @@
 
 #include "entries.h"
 #include "bgsub.h"
+#include "selector.h"
 
 #define WIDTH 256
 #define HEIGHT 192
+
+#define SELECTOR_Y 139
+#define SELECTOR_X 49
 
 int max(int x, int y) {
   if (x > y) return x;
@@ -26,6 +30,29 @@ void init_sub_bg() {
     dmaCopy(bgsubPal, BG_PALETTE_SUB, bgsubPalLen);
 }
 
+u16* selector_gfx;
+
+void copy_selector_gfx(int step) {
+  u8* src = (u8*)selectorTiles; // TODO anim
+  dmaCopy(src, selector_gfx, 16 * 16);
+}
+
+void init_selector_gfx() {
+  dmaCopy(selectorPal, SPRITE_PALETTE_SUB, selectorPalLen);
+  selector_gfx = oamAllocateGfx(&oamSub, SpriteSize_16x16, SpriteColorFormat_256Color);
+  copy_selector_gfx(0);
+}
+
+int selected = 0;
+
+void set_selector_gfx() {
+  int y = SELECTOR_Y;
+  int x = SELECTOR_X + selected * 24;
+  oamSet(&oamSub, SELECTOR_ENTRY, x, y, 0, 0,
+         SpriteSize_16x16, SpriteColorFormat_256Color, selector_gfx, -1,
+         false, false, false, false, false);
+}
+
 int get_pixel(int x, int y) {
   return VRAM_A[y * 256 + x];
 }
@@ -39,7 +66,7 @@ void clear_screen() {
 }
 
 void add_sand(int x, int y, int color) {
-  set_pixel(x, y, color);
+  if(!get_pixel(x, y)) set_pixel(x, y, color);
 }
 
 void update_cell(int x, int y) {
@@ -99,8 +126,24 @@ int hsv_to_rgb(int h, float v, float s) {
   return RGB15((int)((r1 + m) * 31), (int)((g1 + m) * 31), (int)((b1 + m) * 31));
 }
 
-void vblank() {
+int get_color() {
   static int current_hue;
+
+  switch(selected) {
+  case 1: return RGB15(31, 0, 0);
+  case 2: return RGB15(31, 15, 0);
+  case 3: return RGB15(31, 31, 0);
+  case 4: return RGB15(0, 31, 0);
+  case 5: return RGB15(0, 31, 31);
+  case 6: return RGB15(0, 0, 31);
+  case 7: return RGB15(31, 0, 31);
+  default:
+    current_hue = (current_hue+1)%360;
+    return hsv_to_rgb(current_hue, 1, 1);
+  }
+}
+
+void vblank() {
 
   scanKeys();
   int held = keysHeld();
@@ -109,13 +152,22 @@ void vblank() {
     touchPosition touch;
     touchRead(&touch);
 
-    int c = hsv_to_rgb(current_hue, 1, 1);
+    int c = get_color();
     for(int x = touch.px-1; x <= touch.px+1; x++) {
       for(int y = touch.py-1; y <= touch.py+1; y++) {
         add_sand(min(WIDTH-1, max(0, x)), min(HEIGHT-1, max(0, y)), c);
       }
     }
-    current_hue = (current_hue+1)%360;
+  }
+
+  int down = keysDown();
+  if(down & KEY_START) {
+    clear_screen();
+  }
+  if(down & KEY_LEFT) {
+    selected = (selected + 7) % 8;
+  } else if(down & KEY_RIGHT) {
+    selected = (selected + 1) % 8;
   }
 
   oamUpdate(&oamSub);
@@ -135,11 +187,13 @@ int main() {
   vramSetBankD(VRAM_D_SUB_SPRITE);
   init_sub_bg();
   oamInit(&oamSub, SpriteMapping_1D_32, false);
+  init_selector_gfx();
 
   irqSet(IRQ_VBLANK, vblank);
 
   while(true) {
     update_world();
+    set_selector_gfx();
     swiWaitForVBlank();
   }
 }
